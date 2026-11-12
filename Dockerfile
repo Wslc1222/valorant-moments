@@ -23,6 +23,9 @@ RUN apt-get update \
 # Deliberately exclude configs, databases, git history, media, and test fixtures.
 COPY --chown=1000:1000 app.py datasource.py library.py mapping.py nas_archive.py nas_server.py ./
 COPY --chown=1000:1000 web/ ./web/
+# NAS archive extraction can preserve restrictive file/directory mode bits.
+# Normalize only the immutable application code, never host media or state.
+RUN chown -R 1000:1000 /app && chmod -R u=rwX,go=rX /app
 
 USER 1000:1000
 EXPOSE 8765
