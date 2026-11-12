@@ -1,0 +1,56 @@
+# Trusted home LAN ONLY: no authentication. Never publish through a public
+# reverse proxy or router port forwarding, and do not open public SSH.
+# Set VM_MEDIA_PATH and VM_DATA_PATH to two separate, existing, NON-NESTED
+# host directories. Mount only the recordings directory, NEVER the NAS root,
+# /var/run/docker.sock, other applications, or the user's home directory.
+# Pre-create VM_DATA_PATH writable by PUID:PGID; do not chmod the NAS globally.
+# Media symlinks are rejected; use actual files in the media directory.
+# Use one container / one Uvicorn worker. Do not add privileged or host PID mode.
+services:
+  valorant-moments:
+    image: valorant-moments-nas:local
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${VM_BASE_IMAGE:-python:3.12-slim}
+    user: "${PUID:-1000}:${PGID:-1000}"
+    init: true
+    privileged: false
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      TZ: Asia/Shanghai
+      VM_NAS_MODE: "1"
+      VM_MEDIA_ROOT: /media
+      VM_DATA_DIR: /data
+      VM_SCAN_INTERVAL: "${VM_SCAN_INTERVAL:-120}"
+    ports:
+      # Prefer a specific NAS LAN address if available, never a public address.
+      - "${VM_BIND_ADDRESS:-0.0.0.0}:${VM_HTTP_PORT:-8765}:8765"
+    volumes:
+      - type: bind
+        source: ${VM_MEDIA_PATH:?Set VM_MEDIA_PATH to the media-only host directory}
+        target: /media
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${VM_DATA_PATH:?Set VM_DATA_PATH to a separate writable state directory}
+        target: /data
+        read_only: false
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; r=json.load(urllib.request.urlopen('http://127.0.0.1:8765/health',timeout=3)); raise SystemExit(0 if r.get('ok') else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 5m
+      retries: 3

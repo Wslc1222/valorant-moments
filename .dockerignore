@@ -1,0 +1,21 @@
+# Allowlist the build context; no private config, .git, .venv, state, fixtures,
+# screenshots, archives, or user media can enter the context/image.
+**
+!Dockerfile
+!requirements-nas.txt
+!LICENSE
+!nas_server.py
+!app.py
+!datasource.py
+!library.py
+!mapping.py
+!nas_archive.py
+!web/
+!web/**
+**/.DS_Store
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/.git
+**/node_modules

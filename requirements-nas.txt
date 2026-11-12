@@ -1,0 +1,5 @@
+# NAS runtime only. Install pytest/httpx separately in the development venv.
+# Resolved against Python 3.12; retain exact direct dependency versions.
+fastapi==0.162.5
+uvicorn==0.54.0
+pycryptodome==4.4.0

@@ -59,11 +59,15 @@ def _read_hex(path):
     return raw
 
 
-def try_decrypt(path, ident):
-    """尝试用给定的 openid / gopenid 解密一个数据库文件，返回 dict 或 None。"""
+def try_decrypt(path, ident, *, ciphertext=None):
+    """解密数据库；ciphertext 可传入已经安全读取并校验的原始归档字节。"""
     if not _HAS_CRYPTO:
         raise RuntimeError('缺少 pycryptodome，请先执行: pip install pycryptodome')
-    raw = _read_hex(path)
+    if ciphertext is None:
+        raw = _read_hex(path)
+    else:
+        text = ciphertext.decode('utf-8', 'ignore') if isinstance(ciphertext, bytes) else ciphertext
+        raw = re.sub(r'[^0-9a-fA-F]', '', text)
     if len(raw) < 64:
         return None
     candidates = [
@@ -112,9 +116,27 @@ def find_db_files(root):
     这样：选了含数据的目录 -> 用数据库；选了不含数据的目录 -> 走纯文件扫描。
     """
     found = []
+    nas_mode = os.environ.get('VM_NAS_MODE') == '1'
+    root_real = os.path.realpath(os.path.abspath(root))
+
+    def in_scope(path):
+        if not nas_mode:
+            return True
+        try:
+            relative = os.path.relpath(os.path.abspath(path), root_real)
+            if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+                return False
+            current = root_real
+            for component in relative.split(os.sep):
+                current = os.path.join(current, component)
+                if os.path.islink(current):
+                    return False
+            return os.path.commonpath((root_real, os.path.realpath(path))) == root_real
+        except (OSError, ValueError):
+            return False
 
     def add_dir(d, kind):
-        if not os.path.isdir(d):
+        if not in_scope(d) or not os.path.isdir(d):
             return
         try:
             names = os.listdir(d)
@@ -122,7 +144,7 @@ def find_db_files(root):
             return
         for name in names:
             p = os.path.join(d, name)
-            if not os.path.isfile(p):
+            if not in_scope(p) or name.casefold().endswith('.partial') or not os.path.isfile(p):
                 continue
             # snapshot<id> 是截图副库，跳过
             if name.startswith('snapshot'):
@@ -155,7 +177,7 @@ def find_db_files(root):
     scan_base(root_abs)
 
     # 3) 祖先链最多 6 层
-    if not found:
+    if not found and not nas_mode:
         cur = root_abs
         for _ in range(6):
             nxt = os.path.dirname(cur)
@@ -167,7 +189,7 @@ def find_db_files(root):
                 break
 
     # 4) AppData 兄弟分支（真实安装布局就在这一层命中）
-    if not found:
+    if not found and not nas_mode:
         cur = root_abs
         for _ in range(8):
             nxt = os.path.dirname(cur)
@@ -203,6 +225,12 @@ def load_library(root):
                                  type, resolution, level}]}]
       meta:    诊断信息（用了哪些库、账号、失败原因）
     """
+    # Archive import is selected even for an invalid archive, so errors remain
+    # visible and we never fall through to an unrelated ancestor database.
+    import nas_archive
+    if nas_archive.has_snapshots(root):
+        return nas_archive.load_library(root)
+
     matches = []
     meta = {'databases': [], 'errors': []}
     for dbf in find_db_files(root):
@@ -314,37 +342,10 @@ def kind_rank(m):
 VIDEO_EXT = {'.mp4', '.mov', '.mkv', '.webm', '.m4v'}
 
 
-def scan_files(root):
-    """没有数据库时：直接扫描视频文件，构造最小对局结构。"""
-    out = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        # 跳过无关素材目录
-        dirnames[:] = [d for d in dirnames if d not in ('edit', 'record', 'videoExportTmp', 'snapshot', 'cover')]
-        vids = [f for f in filenames if os.path.splitext(f)[1].lower() in VIDEO_EXT]
-        if not vids:
-            continue
-        folder = os.path.basename(dirpath)
-        covers = sorted([f for f in filenames if f.lower().startswith('cover') and f.lower().endswith('.jpeg')])
-        mt = os.path.getmtime(dirpath)
-        vlist = []
-        for i, f in enumerate(sorted(vids)):
-            p = os.path.join(dirpath, f)
-            poster = os.path.join(dirpath, covers[i]) if i < len(covers) else ''
-            vlist.append({
-                'video_id': os.path.splitext(f)[0],
-                'src': p, 'poster': poster,
-                'duration_ms': 0, 'size': os.path.getsize(p),
-                'type': '', 'resolution': '', 'level': '', 'time': int(mt * 1000),
-                'is_upload': False, 'clips_count': 0,
-            })
-        out.append({
-            'matches_id': folder, 'openid': '', 'kind': 'scan',
-            'matches_time': int(mt * 1000), 'game_end_time': 0,
-            'agent_name': '', 'agent_id': '', 'map_id': '', 'map_name': '',
-            'map_image': '', 'stats': {}, 'mode': '', 'videos': vlist,
-        })
-    out.sort(key=lambda x: x['matches_time'], reverse=True)
-    return out
+def scan_files(root, errors=None):
+    """安全的普通视频扫描；包含 record，排除元数据、partial 与所有链接。"""
+    import nas_archive
+    return nas_archive.scan_files(root, errors=errors)
 
 
 if __name__ == '__main__':

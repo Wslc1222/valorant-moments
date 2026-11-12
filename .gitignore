@@ -46,3 +46,11 @@ _*.log
 # ===== 宣传片相关（本地构建产物，不提交）=====
 *.mp4
 _video_src/
+
+# ===== NAS 本地部署数据与构建产物，不提交 =====
+data/
+media/
+dist/
+.env
+.env.*
+!.env.example

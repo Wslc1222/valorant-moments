@@ -22,10 +22,19 @@ def build(root, existing=None):
     """existing: 上一次的索引，用来继承 fav / name / hidden 这些用户改过的字段。"""
     t0 = time.time()
     matches, meta = datasource.load_library(root)
-    mode = 'db'
-    if not matches:
-        mode = 'scan'
-        matches = datasource.scan_files(root)
+    mode = 'archive' if meta.get('archive') else 'db'
+    if not matches or mode == 'archive' or os.environ.get('VM_NAS_MODE') == '1':
+        if not matches and mode != 'archive':
+            mode = 'scan'
+        # A newer snapshot need not mention every existing file. Preserve all
+        # imported history, then add genuinely unassociated files from disk.
+        known = {os.path.normcase(os.path.abspath(v['src']))
+                 for match in matches for v in match.get('videos', []) if v.get('src')}
+        for match in datasource.scan_files(root, errors=meta.setdefault('errors', [])):
+            match['videos'] = [v for v in match['videos']
+                               if os.path.normcase(os.path.abspath(v['src'])) not in known]
+            if match['videos']:
+                matches.append(match)
 
     prev = {}
     if existing:
@@ -97,6 +106,10 @@ def build(root, existing=None):
                 rec['fav'] = True
             if old.get('hidden'):
                 rec['hidden'] = True
+            if old.get('rename'):
+                rec['rename'] = old['rename']
+            if isinstance(old.get('tags'), list):
+                rec['tags'] = list(old['tags'])
             records.append(rec)
 
     # 统计聚合，给前端筛选下拉用（带数量，前端按数量排序）
